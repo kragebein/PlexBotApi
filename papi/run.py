@@ -22,20 +22,11 @@ from plexapi.exceptions import NotFound
 
 plex = PlexServer(conf.plex_location, conf.plex_token)
 omdb.set_default('apikey', conf.omdb_key)
-#title = omdb.get(imdbid='tt0944947')
-#data = omdb.get(imdbid='tt0944947', fullplot=True, tomatoes=False, season=1, episode=2)
-#plexdata = plex.library.section('Series').get(title['title']).season(1).episode(episode=2)
-# sys.exit(1)
-# print(plexdata.guid)
-# for i in plex.library.sections():
-#    print(i.type)
-# sys.exit(1)
 
 app = Flask(__name__)
 api = Api(app, catch_all_404s=True)
 cp = cp()
 me = me()
-
 
 def log(message):
     ''' Own logger function '''
@@ -48,11 +39,13 @@ class other():
     def __init__(self):
         self.run = 0
         self.array = []
+        
 
     def sql(self, thekey=None, name=None):
         ''' On init, sql sets up and makes sure db is running 
-        or set up array. On further run this will add new keys to db'''
-        a = sqlite3.connect('/home/krage/PlexApi/papi/db.db')
+        or register keys in array from db if it already exists. On further run this will add new keys to db'''
+        
+        a = sqlite3.connect(conf.selfpath + '/papi/db.db')
         b = a.cursor()
         if self.run == 0:
             query = 'CREATE TABLE IF NOT EXISTS users \
@@ -201,8 +194,8 @@ class dorequest(Resource):
         if not x.auth(key):
             return {'message': 'Unauthorized'}
         data = omdb.imdbid(query)
-        if len(data):
-            return {'result': 'not a valid imdb id'}
+        if len(data) == 0:
+            return {'result': 'not a valid imdb id: {}'.format(data)}
         if query is None:
             return {'result': 'missing argument'}
         logging.info('Trying to request {}'.format(query))
@@ -222,7 +215,7 @@ class missing(Resource):
     def get(self, key, query, season, episode):
         if not x.auth(key):
             return {'message': 'Unauthorized'}
-        log('{} accessed plexbotapi'.format(x.array['key']))
+        #log('{} accessed plexbotapi'.format(x.array['key']))
         return {'result': self.missing(key, query, season, episode)}
 
     def missing(self, key, query, season, episode):
@@ -319,4 +312,4 @@ class rest():
         api.add_resource(adduser, '/rest/<key>/adduser/<thekey>/<name>')
         api.add_resource(refresh, '/rest/<key>/refresh/<query>')
         api.add_resource(gethelp, '/rest/<key>/help')
-        app.run(port='5002', host='0.0.0.0', debug=True)
+        app.run(port='5002', host='0.0.0.0', debug=False)
