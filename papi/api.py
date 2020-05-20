@@ -43,9 +43,6 @@ def ttdb(input):
           return False
        imdbid = response['imdbId']
        return imdbid
-
-
-
 class couchpotato():
     def get(self, where, **argv):
         url = conf.cp_host + '/api/' + conf.cp_key + '/' + where
@@ -105,7 +102,6 @@ class couchpotato():
                 result = 'False'
             results[i['imdb_id']] = {'title': i['title'],'year': i['year'],'type': i['type'],'plex': result}
         return results
-
 class medusa():
     def get(self, where, **argv):
             url = conf.medusa_host + '/api/' + conf.medusa_key + '/?cmd=' + where
@@ -148,25 +144,17 @@ class medusa():
             initial = conf.medusa_qold
         location = storage(imdb_data, conf.storage_series)
         request = medusa().get('show.addnew', indexerid=indexerid, \
-        status=status, future_status=future_status, \
-        season_folder=season_folder, initial=initial, \
-        location=location, anime=anime, lang=lang)
-
+            status=status, future_status=future_status, \
+            season_folder=season_folder, initial=initial, \
+            location=location, anime=anime, lang=lang)
+        request = json.loads(request)
         try:
-            if request['data']['result'] == 'success':
-                return('La tell "{}" på Plex. Kommer fortløpanes.'.format(request['data']['name']))
+            if request['result'] == 'success':
+                return('Success! Requested {}'.format(request['data']['name']))
         except:
-            logging.debug('Request to medusa failed.. Trying again in 10 seconds..')
-            time.sleep(10)
-            try:
-                if request['data']['result'] == 'success':
-                    return('La tell "{}" på Plex. Kommer fortløpanes.'.format(request['data']['name']))
-                logging.info('Request Successful!')
-                pass
-            except:
-                logging.debug('Second attempt failed.')
-                return('Couldnt add this show, bogus response from medusa:\n{}'.format(request))
-        return('error: {}'.format(request))
+            logging.debug('request failed')
+            data = '{} - {}'.format(type(request), request)
+            return('failed')
 
         
     def search(self, input):
