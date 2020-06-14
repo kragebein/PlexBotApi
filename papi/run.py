@@ -402,10 +402,8 @@ class gethelp(Resource):
     def get(self, key):
         return {'result': {'route': 'https://plex.lazywack.no/rest/<apikey>/<route>', 'search': 'querytext', 'missing': 'imdbid/season/episode', 'request': 'imdbid', 'imdb': 'imdbid', 'refresh': 'imdbid'}}
 
-
 class rest():
     def __init__(self):
-        
         x.sql()
         api.add_resource(search, '/rest/<key>/search/<query>')  # Search route
         # request route
