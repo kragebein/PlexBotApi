@@ -1,13 +1,5 @@
 #!/usr/bin/python3.6
 ''' Plexbot restpi '''
-from flask import Flask, request
-from flask_restful import Resource, Api
-from json import dumps
-from flask_jsonpify import jsonify
-from papi.api import couchpotato as cp
-from papi.api import medusa as me
-from papi.api import ttdb
-from papi.config import conf
 import omdb
 import logging
 import re
@@ -17,8 +9,21 @@ import sys
 import hashlib
 import os
 import binascii
+import datetime
+import discord
+from flask import Flask, request
+from flask_restful import Resource, Api
+from json import dumps
+from flask_jsonpify import jsonify
+from papi.api import tapi
+from papi.api import couchpotato as cp
+from papi.api import medusa as me
+from papi.api import ttdb
+from papi.api import Tautulli
+from papi.config import conf
 from plexapi.server import PlexServer
 from plexapi.exceptions import NotFound
+from discord import Webhook, RequestsWebhookAdapter
 
 plex = PlexServer(conf.plex_location, conf.plex_token)
 omdb.set_default('apikey', conf.omdb_key)
@@ -98,10 +103,7 @@ class other():
         pwdhash = binascii.hexlify(pwdhash).decode('ascii')[:40]
         return pwdhash == stored_password
 
-
 x = other()
-
-
 class adduser(Resource):
     def get(self, key, thekey, name):
         if not x.auth(key):
@@ -144,7 +146,7 @@ class imdb(Resource):
         if query is None:
             return {'message': 'missing argument'}
         if odata['type'] in ('movie', 'documentary', 'standup'):
-            return {'result': odata}
+            return {'resul': odata}
         if odata['type'] == 'series':
             if season is None and episode is None:
                 data = omdb.get(imdbid=query, fullplot=True, tomatoes=False)
@@ -224,9 +226,9 @@ class missing(Resource):
             return {'result': 'not a valid imdb id'}
         if query is None:
             return {'result': 'missing argument'}
+        # check if this show exists with another indexer first and use that ID.
         ttdbid = ttdb(query)
-        result = json.loads(
-            me.get('episode', indexerid=ttdbid, season=season, episode=episode))
+        result = json.loads(me.get('episode', indexerid=ttdbid, season=season, episode=episode))
         title = data['title']
         api_result = result['result']
         if api_result == 'success':
@@ -276,6 +278,109 @@ class missing(Resource):
         elif api_result == 'failure':
             return('this show doesnt exist yet.')
 
+class announce(Resource):
+    def get(self, key, ratingkey):
+        if not x.auth(key):
+            return {'message': 'Unauthorized'}
+        #log('{} accessed plexbotapi'.format(x.array['key']))
+        tvdb = tapi.TVDB(conf.ttdb_key, banners=True)
+        omdb.set_default('apikey', conf.omdb_key)
+        year = datetime.datetime.today().year
+        '''function returns viable data from tautulli'''
+        taut = Tautulli() # 
+        if not isinstance(ratingkey, int):
+            ratingkey = int(ratingkey)
+        metadata = taut.get('get_metadata', rating_key=ratingkey)
+        try:
+            text = ''
+            _type = metadata['response']['data']['library_name']
+        except:
+            logging.info('Tried to announce season (ratingkey: {})'.format(ratingkey))
+            #text = 'Added a new show (rating key: {}), but something went wrong while announcing this to Discord'.format(ratingkey)
+            #webhook = Webhook.partial(conf.discord_webhook, conf.discord_webtoken, adapter=RequestsWebhookAdapter())
+            #webhook.send(text, username='Plexbot')
+            return(False)
+        if _type == 'Series':
+    
+                thetvdb = metadata['response']['data']['parent_guid'].split('//')[1].split('/')[0]
+                episode = int(metadata['response']['data']['media_index'])
+                season = int(metadata['response']['data']['parent_media_index'])
+                _metadata = tvdb.get_series(thetvdb, 'en')
+                title = _metadata.SeriesName
+                plot = _metadata[season][episode].Overview
+                rating = str(_metadata[season][episode].Rating) + '/10'
+                episode_name = _metadata[season][episode].EpisodeName
+                release = _metadata[season][episode].FirstAired
+                
+                imdbid = ttdb(thetvdb)
+                omdbdata = omdb.imdbid('{}'.format(imdbid))
+                url = 'https://www.imdb.com/title/{}/'.format(imdbid)
+                if rating == '0/10':
+                    rating = 'N/A'
+                if release is '':
+                    release = str(year) + '*'
+                if rating is '' or rating == '/10' or rating == 'N/A':
+                    rating = '1.0/10*'
+                if plot == '':
+                    plot = 'N/A'
+                if title == '' or title == 'N/A':
+                    title = 'N/A'
+                embed = discord.Embed(title='{} ({}x{}) is on Plex!'.format(title, season, episode), url=url, colour=discord.Colour(0xf9c38b))
+                embed.add_field(name='Episode name', value=episode_name, inline=False)
+                embed.add_field(name='Season', value=season, inline=True)
+                embed.add_field(name='Episode', value=episode, inline=True)
+                embed.add_field(name='Release date', value=release, inline=True)
+                embed.add_field(name='Rating', value=rating, inline=True)
+                embed.add_field(name='Plot', value=plot, inline=False)
+                try:
+                    if omdbdata['poster'] != 'N/A':
+                        embed.set_thumbnail(url=omdbdata['poster'])
+                except:
+                    pass
+                embed.set_footer(text='Plexbot.py', icon_url='https://zhf1943ap1t4f26r11i05c7l-wpengine.netdna-ssl.com/wp-content/uploads/2018/01/pmp-icon-1.png')
+
+        elif _type == 'Films' or _type == '4K Movies' or _type == 'Norsk':
+                imdbid = metadata['response']['data']['guid'].split('//')[1].split('?')[0]
+                metadata = json.loads(omdb.request(i=imdbid).text)
+                title = metadata['Title']
+                release = metadata['Released']
+                plot = metadata['Plot']
+                rating = metadata['Ratings'][0]['Value']
+                omdbdata = omdb.imdbid('{}'.format(imdbid))
+
+                if rating == '0/10':
+                    rating = 'N/A'
+                if release is '':
+                    release = str(year) + '*'
+                if rating is '' or rating == '/10':
+                    rating = '1.0/10*'
+                if plot == '':
+                    plot = 'N/A'
+                if title == '' or title == 'N/A':
+                    title = 'N/A'
+                url = 'https://www.imdb.com/title/{}/'.format(imdbid)
+                embed = discord.Embed(title='New movie "{}" available'.format(title), url=url, colour=discord.Colour(0xf9c38b))
+                embed.add_field(name='Original title', value=title)
+                embed.add_field(name='Release date', value=release, inline=True)
+                embed.add_field(name='Rating', value=rating, inline=True)
+                embed.add_field(name='Plot', value=plot)
+                try:
+                    if omdbdata['poster'] != 'N/A':
+                        embed.set_thumbnail(url=metadata['Poster'])
+                except:
+                    pass
+                embed.set_footer(text='Plexbot.py', icon_url='https://zhf1943ap1t4f26r11i05c7l-wpengine.netdna-ssl.com/wp-content/uploads/2018/01/pmp-icon-1.png')
+
+        else:
+            logging.info('Added rating key {} in new library: {}'.format(ratingkey, _type))
+            embed = discord.Embed(title='A new item was added')
+            embed.add_field(name='Rating key', value=ratingkey)
+            embed.add_field(name='Section', value=_type)
+            embed.set_footer(text='Plexbot.py', icon_url='https://zhf1943ap1t4f26r11i05c7l-wpengine.netdna-ssl.com/wp-content/uploads/2018/01/pmp-icon-1.png')
+        webhook = Webhook.partial(conf.discord_webhook, conf.discord_webtoken, adapter=RequestsWebhookAdapter())
+        webhook.send(text, embed=embed, username='Plexbot')
+        return {'result': 'Announced'}
+
 
 class refresh(Resource):
     def get(self, key, query):
@@ -292,6 +397,7 @@ class refresh(Resource):
             return {'message': 'Could not update item'}
 
 
+
 class gethelp(Resource):
     def get(self, key):
         return {'result': {'route': 'https://plex.lazywack.no/rest/<apikey>/<route>', 'search': 'querytext', 'missing': 'imdbid/season/episode', 'request': 'imdbid', 'imdb': 'imdbid', 'refresh': 'imdbid'}}
@@ -299,6 +405,7 @@ class gethelp(Resource):
 
 class rest():
     def __init__(self):
+        
         x.sql()
         api.add_resource(search, '/rest/<key>/search/<query>')  # Search route
         # request route
@@ -312,4 +419,8 @@ class rest():
         api.add_resource(adduser, '/rest/<key>/adduser/<thekey>/<name>')
         api.add_resource(refresh, '/rest/<key>/refresh/<query>')
         api.add_resource(gethelp, '/rest/<key>/help')
+        # announce route
+        api.add_resource(announce, '/rest/<key>/announce/<ratingkey>')
         app.run(port='5002', host='0.0.0.0', debug=False)
+        
+
