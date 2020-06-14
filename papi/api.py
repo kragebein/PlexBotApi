@@ -2,11 +2,18 @@
 # -*- coding: utf-8 -*-
 import json, time, omdb, re, requests, logging, sys
 import tvdbsimple as tvdb
+import os, stat, atexit,datetime, traceback
+from pytvdbapi import api as tapi
+import discord
+from discord import Webhook, RequestsWebhookAdapter
 #from plexapi.server import PlexServer
 from papi.config import conf
 conf = conf()
 omdb.set_default('apikey', conf.omdb_key)
-    
+
+
+
+
 def storage(data, location):
     ''' storage is used for setting up staging area by adding the movie/show to 
     a specific folder starting with the first letter of the title. Will skip "The" if it exists
@@ -156,7 +163,6 @@ class medusa():
             data = '{} - {}'.format(type(request), request)
             return('failed')
 
-        
     def search(self, input):
         results = {}
         for i in omdb.search_series(input):
