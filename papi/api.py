@@ -14,6 +14,7 @@ omdb.set_default('apikey', conf.omdb_key)
 
 
 
+
 def storage(data, location):
     ''' storage is used for setting up staging area by adding the movie/show to 
     a specific folder starting with the first letter of the title. Will skip "The" if it exists
@@ -63,9 +64,9 @@ class couchpotato():
         title = data['title']
         try:
             if status['status'] == 'done':
-                return '{} ({}) fins allerede på Plex.'.format(title, imdbid)
+                return 'exists'
             elif status['status'] == 'active':
-                return 'Filmen \"{}\" ligg allerede i kø.'.format(title)
+                return 'already_queued'
         except:
             pass
         if not status:
@@ -78,7 +79,7 @@ class couchpotato():
             request = json.loads(couchpotato().get('movie.add', force_readd=False, title=data['title'], identifier=imdbid, profile_id=initial))
             try:
                 if request['success']:
-                    return('La tell filmen "{}". Kommer fortløpanes'.format(title))
+                    return('requested')
             except Exception as r:
                 print(request)
                 print(r)
