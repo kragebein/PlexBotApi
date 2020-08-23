@@ -1,11 +1,13 @@
 #!/usr/bin/python2.7
 ''' Reads config from file '''
-import configparser
+import configparser, os
 
 
 class conf():
+    selfpath = os.path.dirname(os.path.abspath(__file__)).split('/papi')[0]
+    configfile = selfpath + '/config.cfg'
     c = configparser.ConfigParser()
-    c.read('/home/krage/PlexbotPy/config.cfg')
+    c.read(configfile)
     client = c['DEFAULT']['client']
     medusa = c['MEDUSA']
     medusa_host = medusa['hostname']
