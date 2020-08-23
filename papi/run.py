@@ -11,6 +11,7 @@ import os
 import binascii
 import datetime
 import discord
+import time
 from flask import Flask, request
 from flask_restful import Resource, Api
 from json import dumps
@@ -44,6 +45,11 @@ class other():
     def __init__(self):
         self.run = 0
         self.array = []
+        self.announces = []
+        with open('papi/announces.json', 'r') as g:
+            self.announces = json.loads(g.read())
+            g.close()
+
         
 
     def sql(self, thekey=None, name=None):
@@ -117,13 +123,55 @@ class adduser(Resource):
         else:
             return {'message': 'Couldnt not add user.'}
 
+class status(Resource):
+    ''' Retrieve status of the plex server '''
+    def get(self, key):
+        if not x.auth(key):
+            return {'message': 'Unauthorized'}
+        taut = Tautulli()
+        try:
+            activity = taut.get('get_activity')
+            last_add = taut.get('get_recently_added', count=1)
+            since = int(time.time()) - int(last_add['response']['data']['recently_added'][0]['added_at'])
+            since = int(since) / 60 / 60
+            last_meta = taut.get('get_metadata', rating_key=last_add['response']['data']['recently_added'][0]['rating_key'])
+            last_title = last_meta['response']['data']['full_title']
+            stream_count_total = activity['response']['data']['stream_count']
+            bandwidth = round(activity['response']['data']['total_bandwidth'] * 0.0009765625 / 8,1) #bandwidth in mb/s
+            client_bandwidth = []
+            for i in activity['response']['data']['sessions']:
+                client_bandwidth.append(round(float(i['bandwidth']) * 0.0009765625 / 8,1))
+
+            return {'result': activity, 'last': last_meta, 'last_since': str(since)[0:4], 'stream_count': stream_count_total, 'total_bandwidth': bandwidth, 'bandwidth': client_bandwidth}
+        except Exception as R:
+            
+            return {'message': 'error, couldnt retrieve status. {}'.format(R)}
 
 class search(Resource):
     '''query'''
-
+       
     def get(self, key, query):
         if not x.auth(key):
             return {'message': 'Unauthorized'}
+        # Check if search string is imdb url or imdbid
+        if 'http' in query:
+            query.split('/')[3]
+        _regex = '^.t.{0,9}'
+        if re.match(_regex, query):
+            # imdbid found, lets return from here instead.
+            y = imdb()
+            data = y.get(key, query)
+            
+            results = {}
+            results[query] = {'title': data['result']['title'], 
+                            'year': data['result']['year'],
+                            'type': data['result']['type'],
+                            'plex': data['plex']}
+            print(results)
+            return jsonify(results)
+        else:
+            # The search string was not a imdbid, do a regular search instead
+            pass
         results = cp.search(query)
         results.update(me.search(query))
         data = {}
@@ -146,7 +194,17 @@ class imdb(Resource):
         if query is None:
             return {'message': 'missing argument'}
         if odata['type'] in ('movie', 'documentary', 'standup'):
-            return {'resul': odata}
+            # We need to add here if the item is on plex or not.
+            try:
+                plexdata = plex.library.section('Films').get(item)
+                ratingkey = plexdata.guid
+                onplex = True
+            except:
+                onplex = False
+                ratingkey = None
+                pass
+            return {'result': odata, 'plex': onplex, 'ratingKey': ratingkey}
+
         if odata['type'] == 'series':
             if season is None and episode is None:
                 data = omdb.get(imdbid=query, fullplot=True, tomatoes=False)
@@ -195,6 +253,7 @@ class dorequest(Resource):
     def get(self, key, query):
         if not x.auth(key):
             return {'message': 'Unauthorized'}
+        
         data = omdb.imdbid(query)
         if len(data) == 0:
             return {'result': 'not a valid imdb id: {}'.format(data)}
@@ -208,7 +267,63 @@ class dorequest(Resource):
             return_data = me.request(query, data)
         elif _type == 'movie' or 'documentary':
             return_data = cp.request(query, data=data)
-        return {'result': return_data}
+        # WE NEED TO IMPLEMENT A CORRECT RETURN FOR THIS FUNCTION BELOW.
+            if return_data == 'exists':
+                return {'message': 'already exists on system'}
+            elif return_data == 'already_queued':
+                return {'message': 'movie is already queued on the system'}
+            elif return_data == 'requested':
+                return {'result': 'movie was added'}
+            elif return_data == 'backend_api_error':
+                return {'message': 'backend api error'}
+            else:
+                return {'message': return_data}
+        
+
+class Track(Resource):
+    # This absolutely sucks.
+
+    # What data should we get to identify the proper ticket number?
+    data = {'location': 'cache', 'name': 'blurb', 'timestamp': '04/08/2020 13:37', 'other': {}, 'other1': {} }
+
+    def __init__(self):
+        #Init database
+        self.db  = sqlite3.connect('papi/db.db')
+        self.sql = self.db.cursor()
+
+    def tracker(self, data):
+        # Internal tracker
+        query = 'SELECT * from tracker WHERE name REGEX {}'.format(data['name'])
+        results = self.sql.execute(query).fetchall()
+        if len(results) == 0:
+            # No matches to this query. Create new ticket?
+            if data['location'] != 'app':
+                # make sure the data is coming from the app
+                pass
+            return
+        for i in results:
+            if re.match(i['name'], data['name'], re.IGNORECASE):
+                # update ticket with new location and timestamp
+                
+                #i['current'] == data['location']
+                #i['latestupdate'] == data['timestamp'] 
+                #self.sql.execute('INSERT into tracker (data) ({})'.format(json.dumps(i)))
+                # stop exec
+                break
+
+
+    def post(self, key, data):
+        # API handler for the tracker
+        if not x.auth(key):
+            return {'message': 'Unauthorized'}
+        # check if resource is tracked, or if we have to create a new tracking.
+        pass
+    
+
+
+
+
+
 
 
 class missing(Resource):
@@ -279,6 +394,12 @@ class missing(Resource):
             return('this show doesnt exist yet.')
 
 class announce(Resource):
+
+    ''' Announces stuff to discord and makes announce.json available as a list with dicts through the api '''
+    def __init__(self):
+        self.x = sqlite3.connect('papi/db.db')
+        self.sql = self.x.cursor()
+        
     def get(self, key, ratingkey):
         if not x.auth(key):
             return {'message': 'Unauthorized'}
@@ -294,12 +415,13 @@ class announce(Resource):
         try:
             text = ''
             _type = metadata['response']['data']['library_name']
+
         except:
             logging.info('Tried to announce season (ratingkey: {})'.format(ratingkey))
-            #text = 'Added a new show (rating key: {}), but something went wrong while announcing this to Discord'.format(ratingkey)
-            #webhook = Webhook.partial(conf.discord_webhook, conf.discord_webtoken, adapter=RequestsWebhookAdapter())
-            #webhook.send(text, username='Plexbot')
-            return(False)
+            text = 'Added a new show (rating key: {}), but Tautulli is unable to determine type of show'.format(ratingkey)
+            webhook = Webhook.partial(conf.discord_webhook, conf.discord_webtoken, adapter=RequestsWebhookAdapter())
+            webhook.send(text, username='Plexbot')
+            return(metadata)
         if _type == 'Series':
     
                 thetvdb = metadata['response']['data']['parent_guid'].split('//')[1].split('/')[0]
@@ -338,6 +460,7 @@ class announce(Resource):
                 except:
                     pass
                 embed.set_footer(text='Plexbot.py', icon_url='https://zhf1943ap1t4f26r11i05c7l-wpengine.netdna-ssl.com/wp-content/uploads/2018/01/pmp-icon-1.png')
+                announcedata = {'key': ratingkey, 'title': title + ' - ' + episode_name, 'type': _type, 'season': season, 'episode': episode, 'release': str(release), 'rating': rating, 'plot': plot }
 
         elif _type == 'Films' or _type == '4K Movies' or _type == 'Norsk':
                 imdbid = metadata['response']['data']['guid'].split('//')[1].split('?')[0]
@@ -370,6 +493,7 @@ class announce(Resource):
                 except:
                     pass
                 embed.set_footer(text='Plexbot.py', icon_url='https://zhf1943ap1t4f26r11i05c7l-wpengine.netdna-ssl.com/wp-content/uploads/2018/01/pmp-icon-1.png')
+                announcedata = {'key': ratingkey, 'title': title, 'type': _type, 'season': None, 'episode': None, 'release': release, 'rating': rating, 'plot': plot }
 
         else:
             logging.info('Added rating key {} in new library: {}'.format(ratingkey, _type))
@@ -377,10 +501,25 @@ class announce(Resource):
             embed.add_field(name='Rating key', value=ratingkey)
             embed.add_field(name='Section', value=_type)
             embed.set_footer(text='Plexbot.py', icon_url='https://zhf1943ap1t4f26r11i05c7l-wpengine.netdna-ssl.com/wp-content/uploads/2018/01/pmp-icon-1.png')
+            announcedata = {'key': ratingkey, 'type': _type, 'season': None, 'episode': None, 'release': None, 'rating': None, 'plot': None }
         webhook = Webhook.partial(conf.discord_webhook, conf.discord_webtoken, adapter=RequestsWebhookAdapter())
         webhook.send(text, embed=embed, username='Plexbot')
+        
+        # Make sure 'other' is updated.
+        x.announces.append(announcedata)
+        print(x.announces)
+        with open('papi/announces.json', 'w') as g:
+            g.write(json.dumps(x.announces))
+            g.close()
+        
         return {'result': 'Announced'}
 
+class getannounce(Resource):
+    def get(self, key):
+        if not x.auth(key):
+            return {'message': 'Unauthorized'}
+        
+        return x.announces
 
 class refresh(Resource):
     def get(self, key, query):
@@ -413,12 +552,15 @@ class rest():
         # Get missing query
         api.add_resource(
             missing, '/rest/<key>/missing/<query>/<season>/<episode>')
+        # Get status of plex server.
+        api.add_resource(status, '/rest/<key>/status')
         # adduser route
         api.add_resource(adduser, '/rest/<key>/adduser/<thekey>/<name>')
         api.add_resource(refresh, '/rest/<key>/refresh/<query>')
         api.add_resource(gethelp, '/rest/<key>/help')
         # announce route
-        api.add_resource(announce, '/rest/<key>/announce/<ratingkey>')
+        api.add_resource(announce, '/rest/<key>/announce/<ratingkey>') # put 
+        api.add_resource(getannounce, '/rest/<key>/getannounce') # get
         app.run(port='5002', host='0.0.0.0', debug=False)
         
 
